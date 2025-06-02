@@ -2,23 +2,60 @@
   "name": "echo-lingo",
   "version": "0.1.0",
   "private": true,
+  "main": "electron/main.js",
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "electron": "electron .",
+    "electron-dev": "concurrently \"cross-env BROWSER=none npm run dev\" \"wait-on http://localhost:3000 && electron .\"",
+    "package": "electron-builder build --mac --win --linux --publish never",
+    "make": "next build && electron-builder build --mac --win --linux --publish never"
   },
   "dependencies": {
+    "@radix-ui/react-dialog": "^1.0.5",
+    "@radix-ui/react-dropdown-menu": "^2.1.15",
+    "@radix-ui/react-slot": "^1.0.2",
+    "@radix-ui/react-toast": "^1.1.5",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "concurrently": "^8.2.2",
+    "cross-env": "^7.0.3",
+    "electron": "^30.0.0",
+    "electron-builder": "^24.13.1",
+    "lucide-react": "^0.363.0",
+    "next": "15.3.3",
+    "next-themes": "^0.4.6",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "next": "15.3.3"
+    "react-player": "^2.15.1",
+    "sonner": "^2.0.4",
+    "tailwind-merge": "^2.6.0",
+    "wait-on": "^7.2.0",
+    "webdav": "^5.8.0"
   },
   "devDependencies": {
-    "typescript": "^5",
+    "@shadcn/ui": "^0.0.4",
+    "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "@tailwindcss/postcss": "^4",
-    "tailwindcss": "^4"
+    "tailwindcss": "^4",
+    "tw-animate-css": "^1.3.3",
+    "typescript": "^5"
+  },
+  "build": {
+    "appId": "com.echolingo.app",
+    "productName": "EchoLingo",
+    "files": [
+      "electron/**/*",
+      "out/**/*",
+      "public/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "buildResources": "public"
+    }
   }
 }
