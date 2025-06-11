@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/app/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/app/components/ui/card";
 import { Input } from "@/app/components/ui/input";
 import { WebDAVConfigDialog } from "@/app/components/webdav/webdav-config";
-import { FileVideo, FileText, Folder, Upload, Cloud } from "lucide-react";
+import { FileVideo, FileText, Folder, Upload, Cloud, ChevronUp, Loader2, Check } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -15,11 +15,20 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/app/components/ui/dialog";
+import { toast } from "sonner";
 
 interface FileInfo {
   name: string;
   url: string;
   type: "video" | "subtitle";
+}
+
+interface WebDAVFile {
+  filename: string;
+  path: string;
+  type: string;
+  size: number;
+  lastmod: string;
 }
 
 interface FileSelectorProps {
@@ -30,6 +39,37 @@ interface FileSelectorProps {
 
 type FileType = "video" | "subtitle1" | "subtitle2";
 
+// 视频文件扩展名
+const VIDEO_EXTENSIONS = ['.mp4', '.webm', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.m4v'];
+// 字幕文件扩展名
+const SUBTITLE_EXTENSIONS = ['.srt', '.vtt', '.ass', '.ssa', '.sub'];
+
+// 检查文件类型
+const isVideoFile = (filename: string): boolean => {
+  const ext = filename.substring(filename.lastIndexOf('.')).toLowerCase();
+  return VIDEO_EXTENSIONS.includes(ext);
+};
+
+const isSubtitleFile = (filename: string): boolean => {
+  const ext = filename.substring(filename.lastIndexOf('.')).toLowerCase();
+  return SUBTITLE_EXTENSIONS.includes(ext);
+};
+
+// 处理长文件名，超过maxLength个字符时中间部分省略
+const truncateFilename = (filename: string, maxLength = 45): string => {
+  if (filename.length <= maxLength) return filename;
+  
+  const extension = filename.includes('.') ? filename.substring(filename.lastIndexOf('.')) : '';
+  const nameWithoutExt = filename.substring(0, filename.length - extension.length);
+  
+  // 计算前后部分的长度，保留扩展名
+  const frontPartLength = Math.floor((maxLength - 3 - extension.length) / 2);
+  const endPartLength = maxLength - 3 - extension.length - frontPartLength;
+  
+  // 构建省略的文件名
+  return `${nameWithoutExt.substring(0, frontPartLength)}...${nameWithoutExt.substring(nameWithoutExt.length - endPartLength)}${extension}`;
+};
+
 export function FileSelector({
   onVideoSelect,
   onSubtitleOneSelect,
@@ -38,9 +78,12 @@ export function FileSelector({
   const [currentFileType, setCurrentFileType] = useState<FileType | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isWebDAVBrowseOpen, setIsWebDAVBrowseOpen] = useState(false);
-  const [webdavFiles, setWebdavFiles] = useState<FileInfo[]>([]);
+  const [webdavFiles, setWebdavFiles] = useState<WebDAVFile[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [currentFolder, setCurrentFolder] = useState("/");
+  const [folderHistory, setFolderHistory] = useState<string[]>([]);
+  const [webDAVConfigExists, setWebDAVConfigExists] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<WebDAVFile | null>(null);
   
   // 文件类型显示名称
   const fileTypeNames = {
@@ -48,6 +91,23 @@ export function FileSelector({
     subtitle1: "字幕1",
     subtitle2: "字幕2"
   };
+
+  // 检查WebDAV配置是否存在
+  useEffect(() => {
+    const checkWebDAVConfig = async () => {
+      if (typeof window !== 'undefined' && window.electronAPI) {
+        try {
+          const config = await window.electronAPI.getWebDAVConfig();
+          setWebDAVConfigExists(!!config);
+        } catch (error) {
+          console.error('Error checking WebDAV config:', error);
+          setWebDAVConfigExists(false);
+        }
+      }
+    };
+    
+    checkWebDAVConfig();
+  }, []);
 
   // 处理本地文件选择
   const handleLocalFileChange = (
@@ -75,52 +135,135 @@ export function FileSelector({
     }
   };
 
-  // 浏览WebDAV文件（模拟，实际需要实现WebDAV客户端）
-  const browseWebDAVFiles = async () => {
+  // 浏览WebDAV文件
+  const browseWebDAVFiles = async (path = '/') => {
     setIsLoading(true);
     try {
-      // 这里是模拟的WebDAV文件列表，实际应用中需要使用WebDAV客户端获取
-      setTimeout(() => {
-        setWebdavFiles([
-          { name: "示例视频.mp4", url: "https://example.com/video.mp4", type: "video" },
-          { name: "英文字幕.srt", url: "https://example.com/en.srt", type: "subtitle" },
-          { name: "中文字幕.srt", url: "https://example.com/zh.srt", type: "subtitle" },
-        ]);
-        setIsLoading(false);
-      }, 1000);
+      if (typeof window !== 'undefined' && window.electronAPI) {
+        const result = await window.electronAPI.getWebDAVDirectoryContents(path);
+        
+        if (result.success) {
+          // 对文件进行排序：目录优先，然后按文件名字母排序
+          const sortedFiles = [...(result.contents || [])].sort((a, b) => {
+            // 首先按类型排序（目录优先）
+            if (a.type === 'directory' && b.type !== 'directory') return -1;
+            if (a.type !== 'directory' && b.type === 'directory') return 1;
+            
+            // 然后按文件名字母排序（不区分大小写）
+            return a.filename.localeCompare(b.filename, undefined, { sensitivity: 'base' });
+          });
+          
+          setWebdavFiles(sortedFiles);
+          setCurrentFolder(path);
+        } else {
+          toast.error('获取WebDAV文件列表失败', {
+            description: result.error || '未知错误'
+          });
+        }
+      }
     } catch (error) {
       console.error("Error browsing WebDAV files:", error);
+      toast.error('获取WebDAV文件列表失败', {
+        description: '发生错误，请稍后重试'
+      });
+    } finally {
       setIsLoading(false);
     }
   };
 
+  // 打开WebDAV文件夹
+  const openWebDAVFolder = (path: string) => {
+    // 保存当前路径到历史记录
+    setFolderHistory(prev => [...prev, currentFolder]);
+    // 清空选中的文件
+    setSelectedFile(null);
+    browseWebDAVFiles(path);
+  };
+
+  // 返回上一级目录
+  const goToParentFolder = () => {
+    if (folderHistory.length > 0) {
+      const previousFolder = folderHistory[folderHistory.length - 1];
+      setFolderHistory(prev => prev.slice(0, -1));
+      // 清空选中的文件
+      setSelectedFile(null);
+      browseWebDAVFiles(previousFolder);
+    }
+  };
+
   // 选择WebDAV文件
-  const selectWebDAVFile = (file: FileInfo) => {
+  const selectWebDAVFile = async (file: WebDAVFile) => {
     if (!currentFileType) return;
     
-    switch (currentFileType) {
-      case "video":
-        if (file.type === "video") {
-          onVideoSelect(file.url);
-        }
-        break;
-      case "subtitle1":
-        if (file.type === "subtitle") {
-          onSubtitleOneSelect(file.url);
-        }
-        break;
-      case "subtitle2":
-        if (file.type === "subtitle") {
-          onSubtitleTwoSelect(file.url);
-        }
-        break;
+    // 如果是文件夹，打开文件夹
+    if (file.type === 'directory') {
+      openWebDAVFolder(file.path);
+      return;
     }
     
-    // 关闭WebDAV浏览和文件选择对话框
-    setIsWebDAVBrowseOpen(false);
-    setIsDialogOpen(false);
+    // 根据当前选择的文件类型和文件扩展名进行验证
+    const isVideo = isVideoFile(file.filename);
+    const isSubtitle = isSubtitleFile(file.filename);
+    
+    if ((currentFileType === 'video' && !isVideo) || 
+        ((currentFileType === 'subtitle1' || currentFileType === 'subtitle2') && !isSubtitle)) {
+      toast.error('文件类型不匹配', {
+        description: `请选择${currentFileType === 'video' ? '视频' : '字幕'}文件`
+      });
+      return;
+    }
+    
+    // 设置当前选中的文件，显示确认对话框
+    setSelectedFile(file);
   };
   
+  // 确认选择文件
+  const confirmFileSelection = async () => {
+    if (!selectedFile || !currentFileType) return;
+    
+    setIsLoading(true);
+    try {
+      if (typeof window !== 'undefined' && window.electronAPI) {
+        // 先关闭对话框，避免用户等待
+        setIsWebDAVBrowseOpen(false);
+        setIsDialogOpen(false);
+        
+        const result = await window.electronAPI.getWebDAVFileURL(selectedFile.path);
+        
+        if (result.success && result.url) {
+          switch (currentFileType) {
+            case "video":
+              onVideoSelect(result.url);
+              break;
+            case "subtitle1":
+              onSubtitleOneSelect(result.url);
+              break;
+            case "subtitle2":
+              onSubtitleTwoSelect(result.url);
+              break;
+          }
+          
+          // 提示用户选择成功
+          toast.success('文件选择成功', {
+            description: `已选择${selectedFile.filename}`
+          });
+        } else {
+          toast.error('获取文件失败', {
+            description: result.error || '未知错误'
+          });
+        }
+      }
+    } catch (error) {
+      console.error("Error selecting WebDAV file:", error);
+      toast.error('获取文件失败', {
+        description: '发生错误，请稍后重试'
+      });
+    } finally {
+      setIsLoading(false);
+      setSelectedFile(null);
+    }
+  };
+
   // 打开文件选择对话框
   const openFileSelector = (fileType: FileType) => {
     setCurrentFileType(fileType);
@@ -129,8 +272,18 @@ export function FileSelector({
   
   // 打开WebDAV浏览
   const openWebDAVBrowser = () => {
+    if (!webDAVConfigExists) {
+      toast.error('WebDAV未配置', {
+        description: '请先配置WebDAV连接信息'
+      });
+      return;
+    }
+    
+    // 重置文件夹历史和当前文件夹
+    setFolderHistory([]);
+    setCurrentFolder('/');
     setIsWebDAVBrowseOpen(true);
-    browseWebDAVFiles();
+    browseWebDAVFiles('/');
   };
 
   return (
@@ -197,7 +350,7 @@ export function FileSelector({
                 <Input
                   id={`${currentFileType}-file-input`}
                   type="file"
-                  accept={currentFileType === "video" ? "video/*" : ".srt,.vtt"}
+                  accept={currentFileType === "video" ? "video/*" : ".srt,.vtt,.ass,.ssa,.sub"}
                   onChange={(e) => currentFileType && handleLocalFileChange(e, currentFileType)}
                   className="hidden"
                 />
@@ -218,8 +371,13 @@ export function FileSelector({
         </Dialog>
         
         {/* WebDAV浏览对话框 */}
-        <Dialog open={isWebDAVBrowseOpen} onOpenChange={setIsWebDAVBrowseOpen}>
-          <DialogContent>
+        <Dialog open={isWebDAVBrowseOpen} onOpenChange={(open) => {
+          if (!open) {
+            setSelectedFile(null);
+          }
+          setIsWebDAVBrowseOpen(open);
+        }}>
+          <DialogContent className="max-w-3xl">
             <DialogHeader>
               <DialogTitle>浏览WebDAV文件</DialogTitle>
               <DialogDescription>
@@ -229,34 +387,94 @@ export function FileSelector({
             
             <div className="py-4">
               {isLoading ? (
-                <div className="text-center py-8">加载中...</div>
-              ) : (
-                <div className="max-h-80 overflow-y-auto">
-                  <ul className="space-y-1">
-                    {webdavFiles.map((file, index) => (
-                      <li
-                        key={index}
-                        className="flex items-center gap-2 p-2 hover:bg-accent rounded-md cursor-pointer"
-                        onClick={() => selectWebDAVFile(file)}
-                      >
-                        {file.type === "video" ? (
-                          <FileVideo className="h-4 w-4" />
-                        ) : (
-                          <FileText className="h-4 w-4" />
-                        )}
-                        <span className="text-sm">{file.name}</span>
-                      </li>
-                    ))}
-                  </ul>
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-8 w-8 animate-spin" />
+                  <span className="ml-2">加载中...</span>
                 </div>
+              ) : (
+                <>
+                  {/* 导航按钮 */}
+                  {folderHistory.length > 0 && (
+                    <Button 
+                      variant="outline" 
+                      onClick={goToParentFolder} 
+                      className="mb-4"
+                    >
+                      <ChevronUp className="mr-2 h-4 w-4" />
+                      返回上一级
+                    </Button>
+                  )}
+                  
+                  {/* 文件列表 */}
+                  <div className="max-h-80 overflow-y-auto border rounded-md">
+                    {webdavFiles.length === 0 ? (
+                      <div className="text-center py-8 text-muted-foreground">
+                        此文件夹为空
+                      </div>
+                    ) : (
+                      <ul className="divide-y">
+                        {webdavFiles.map((file, index) => {
+                          // 确定文件图标和是否可选
+                          const isDirectory = file.type === 'directory';
+                          const isVideo = isVideoFile(file.filename);
+                          const isSubtitle = isSubtitleFile(file.filename);
+                          const isSelectable = 
+                            isDirectory || 
+                            (currentFileType === 'video' && isVideo) || 
+                            ((currentFileType === 'subtitle1' || currentFileType === 'subtitle2') && isSubtitle);
+                          
+                          // 处理长文件名
+                          const displayFilename = truncateFilename(file.filename);
+                          
+                          return (
+                            <li
+                              key={`file-${index}`}
+                              className={`flex items-center gap-2 p-3 hover:bg-accent ${isSelectable ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'} ${selectedFile?.path === file.path ? 'bg-accent' : ''}`}
+                              onClick={() => isSelectable && selectWebDAVFile(file)}
+                              title={file.filename}
+                            >
+                              {isDirectory ? (
+                                <Folder className="h-5 w-5 text-blue-500" />
+                              ) : isVideo ? (
+                                <FileVideo className="h-5 w-5 text-purple-500" />
+                              ) : isSubtitle ? (
+                                <FileText className="h-5 w-5 text-green-500" />
+                              ) : (
+                                <FileText className="h-5 w-5" />
+                              )}
+                              <span className="text-sm flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{displayFilename}</span>
+                              {!isDirectory && (
+                                <span className="text-xs text-muted-foreground shrink-0">
+                                  {(file.size / 1024 / 1024).toFixed(2)} MB
+                                </span>
+                              )}
+                              {selectedFile?.path === file.path && !isDirectory && (
+                                <Check className="h-4 w-4 text-green-500 shrink-0" />
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </div>
+                  
+                  {/* 确认选择按钮 */}
+                  {selectedFile && selectedFile.type !== 'directory' && (
+                    <div className="mt-4 flex justify-end">
+                      <Button 
+                        onClick={confirmFileSelection}
+                        disabled={isLoading}
+                        className="flex items-center gap-2"
+                        title={selectedFile.filename}
+                      >
+                        <Check className="h-4 w-4" />
+                        确认选择: {truncateFilename(selectedFile.filename, 30)}
+                      </Button>
+                    </div>
+                  )}
+                </>
               )}
             </div>
-            
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setIsWebDAVBrowseOpen(false)}>
-                取消
-              </Button>
-            </DialogFooter>
           </DialogContent>
         </Dialog>
       </CardContent>

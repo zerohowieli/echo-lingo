@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveWebDAVConfig: (config) => ipcRenderer.invoke('save-webdav-config', config),
   getWebDAVConfig: () => ipcRenderer.invoke('get-webdav-config'),
   testWebDAVConnection: (config) => ipcRenderer.invoke('test-webdav-connection', config),
+  getWebDAVDirectoryContents: (path) => ipcRenderer.invoke('get-webdav-directory-contents', path),
+  getWebDAVFileURL: (filePath) => ipcRenderer.invoke('get-webdav-file-url', filePath),
   
   // 窗口控制相关
   minimizeWindow: () => ipcRenderer.send('window-minimize'),

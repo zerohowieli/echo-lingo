@@ -22,6 +22,18 @@ declare global {
       saveWebDAVConfig: (config: WebDAVConfig) => Promise<{ success: boolean; error?: string }>;
       getWebDAVConfig: () => Promise<WebDAVConfig | null>;
       testWebDAVConnection: (config: WebDAVConfig) => Promise<{ success: boolean; error?: string }>;
+      getWebDAVDirectoryContents: (path: string) => Promise<{ 
+        success: boolean; 
+        contents?: Array<{
+          filename: string;
+          path: string;
+          type: string;
+          size: number;
+          lastmod: string;
+        }>;
+        error?: string 
+      }>;
+      getWebDAVFileURL: (filePath: string) => Promise<{ success: boolean; url?: string; error?: string }>;
     };
   }
 }

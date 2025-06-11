@@ -12,6 +12,14 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { toast } from "sonner";
+
+// 字幕条目接口
+interface SubtitleEntry {
+  start: number;
+  end: number;
+  text: string;
+}
 
 interface VideoPlayerProps {
   videoUrl?: string;
@@ -59,6 +67,104 @@ const playbackRates = [
   { value: 2, label: "2x" },
 ];
 
+// 解析SRT字幕文件
+const parseSRT = (srtContent: string): SubtitleEntry[] => {
+  try {
+    const subtitles: SubtitleEntry[] = [];
+    const blocks = srtContent.trim().split(/\r?\n\r?\n/);
+    
+    for (const block of blocks) {
+      const lines = block.split(/\r?\n/);
+      if (lines.length < 3) continue;
+      
+      // 跳过字幕序号，直接读取时间轴
+      const timeMatch = lines[1].match(/(\d{2}):(\d{2}):(\d{2}),(\d{3}) --> (\d{2}):(\d{2}):(\d{2}),(\d{3})/);
+      if (!timeMatch) continue;
+      
+      const startHours = parseInt(timeMatch[1]);
+      const startMinutes = parseInt(timeMatch[2]);
+      const startSeconds = parseInt(timeMatch[3]);
+      const startMilliseconds = parseInt(timeMatch[4]);
+      
+      const endHours = parseInt(timeMatch[5]);
+      const endMinutes = parseInt(timeMatch[6]);
+      const endSeconds = parseInt(timeMatch[7]);
+      const endMilliseconds = parseInt(timeMatch[8]);
+      
+      const startTime = startHours * 3600 + startMinutes * 60 + startSeconds + startMilliseconds / 1000;
+      const endTime = endHours * 3600 + endMinutes * 60 + endSeconds + endMilliseconds / 1000;
+      
+      // 合并剩余行为字幕文本
+      const text = lines.slice(2).join(' ');
+      
+      subtitles.push({
+        start: startTime,
+        end: endTime,
+        text
+      });
+    }
+    
+    return subtitles;
+  } catch (error) {
+    console.error('Error parsing SRT subtitle:', error);
+    return [];
+  }
+};
+
+// 解析VTT字幕文件
+const parseVTT = (vttContent: string): SubtitleEntry[] => {
+  try {
+    const subtitles: SubtitleEntry[] = [];
+    // 移除WEBVTT头部
+    const content = vttContent.replace(/^WEBVTT.*?(\r?\n\r?\n)/i, '');
+    const blocks = content.trim().split(/\r?\n\r?\n/);
+    
+    for (const block of blocks) {
+      const lines = block.split(/\r?\n/);
+      if (lines.length < 2) continue;
+      
+      // 查找时间轴行
+      let timeLineIndex = 0;
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].includes(' --> ')) {
+          timeLineIndex = i;
+          break;
+        }
+      }
+      
+      const timeMatch = lines[timeLineIndex].match(/(\d{2}):(\d{2}):(\d{2})\.(\d{3}) --> (\d{2}):(\d{2}):(\d{2})\.(\d{3})/);
+      if (!timeMatch) continue;
+      
+      const startHours = parseInt(timeMatch[1]);
+      const startMinutes = parseInt(timeMatch[2]);
+      const startSeconds = parseInt(timeMatch[3]);
+      const startMilliseconds = parseInt(timeMatch[4]);
+      
+      const endHours = parseInt(timeMatch[5]);
+      const endMinutes = parseInt(timeMatch[6]);
+      const endSeconds = parseInt(timeMatch[7]);
+      const endMilliseconds = parseInt(timeMatch[8]);
+      
+      const startTime = startHours * 3600 + startMinutes * 60 + startSeconds + startMilliseconds / 1000;
+      const endTime = endHours * 3600 + endMinutes * 60 + endSeconds + endMilliseconds / 1000;
+      
+      // 合并剩余行为字幕文本
+      const text = lines.slice(timeLineIndex + 1).join(' ');
+      
+      subtitles.push({
+        start: startTime,
+        end: endTime,
+        text
+      });
+    }
+    
+    return subtitles;
+  } catch (error) {
+    console.error('Error parsing VTT subtitle:', error);
+    return [];
+  }
+};
+
 export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(
   ({ videoUrl, subtitleOneUrl, subtitleTwoUrl, onCaptureSubtitle }, ref) => {
     const [playing, setPlaying] = useState(false);
@@ -73,6 +179,10 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(
     const [currentSubtitleTwo, setCurrentSubtitleTwo] = useState<string | null>(null);
     const [showControls, setShowControls] = useState(true);
     const [controlsTimer, setControlsTimer] = useState<NodeJS.Timeout | null>(null);
+    const [subtitlesOne, setSubtitlesOne] = useState<SubtitleEntry[]>(mockSubtitlesOne);
+    const [subtitlesTwo, setSubtitlesTwo] = useState<SubtitleEntry[]>(mockSubtitlesTwo);
+    const [isLoadingSubtitles, setIsLoadingSubtitles] = useState(false);
+    const [videoError, setVideoError] = useState<string | null>(null);
     const playerRef = useRef<ReactPlayer>(null);
     const containerRef = useRef<HTMLDivElement>(null);
 
@@ -84,6 +194,65 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(
         setCurrentTime(validTime);
       }
     }));
+
+    // 加载字幕文件
+    useEffect(() => {
+      const loadSubtitle = async (url: string, setSubtitles: React.Dispatch<React.SetStateAction<SubtitleEntry[]>>) => {
+        try {
+          setIsLoadingSubtitles(true);
+          const response = await fetch(url);
+          if (!response.ok) {
+            throw new Error(`Failed to load subtitle: ${response.status}`);
+          }
+          
+          const content = await response.text();
+          const fileExtension = url.substring(url.lastIndexOf('.')).toLowerCase();
+          
+          let parsedSubtitles: SubtitleEntry[] = [];
+          if (fileExtension === '.srt') {
+            parsedSubtitles = parseSRT(content);
+          } else if (fileExtension === '.vtt') {
+            parsedSubtitles = parseVTT(content);
+          } else {
+            // 尝试自动检测格式
+            if (content.trim().startsWith('WEBVTT')) {
+              parsedSubtitles = parseVTT(content);
+            } else {
+              parsedSubtitles = parseSRT(content);
+            }
+          }
+          
+          if (parsedSubtitles.length > 0) {
+            setSubtitles(parsedSubtitles);
+          } else {
+            toast.error('字幕解析失败', {
+              description: '无法解析字幕文件格式'
+            });
+          }
+        } catch (error) {
+          console.error('Error loading subtitle:', error);
+          toast.error('加载字幕失败', {
+            description: '无法加载字幕文件'
+          });
+        } finally {
+          setIsLoadingSubtitles(false);
+        }
+      };
+      
+      // 加载字幕1
+      if (subtitleOneUrl && subtitleOneUrl !== 'mock') {
+        loadSubtitle(subtitleOneUrl, setSubtitlesOne);
+      } else if (!subtitleOneUrl) {
+        setSubtitlesOne([]);
+      }
+      
+      // 加载字幕2
+      if (subtitleTwoUrl && subtitleTwoUrl !== 'mock') {
+        loadSubtitle(subtitleTwoUrl, setSubtitlesTwo);
+      } else if (!subtitleTwoUrl) {
+        setSubtitlesTwo([]);
+      }
+    }, [subtitleOneUrl, subtitleTwoUrl]);
 
     // 监听键盘快捷键
     useEffect(() => {
@@ -155,20 +324,19 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(
 
     // 更新当前字幕
     useEffect(() => {
-      // 移除只在playing时更新字幕的限制
       // 查找当前时间对应的字幕一
-      const subtitleOne = mockSubtitlesOne.find(
+      const subtitleOne = subtitlesOne.find(
         sub => currentTime >= sub.start && currentTime <= sub.end
       );
       
       // 查找当前时间对应的字幕二
-      const subtitleTwo = mockSubtitlesTwo.find(
+      const subtitleTwo = subtitlesTwo.find(
         sub => currentTime >= sub.start && currentTime <= sub.end
       );
       
       setCurrentSubtitleOne(subtitleOne ? subtitleOne.text : null);
       setCurrentSubtitleTwo(subtitleTwo ? subtitleTwo.text : null);
-    }, [currentTime]);
+    }, [currentTime, subtitlesOne, subtitlesTwo]);
 
     // 处理鼠标移动，显示控制栏
     const handleMouseMove = () => {
@@ -206,7 +374,7 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(
     const captureCurrentSubtitle = () => {
       // 根据当前显示的字幕决定捕获哪个字幕
       if (showSubtitleOne && currentSubtitleOne) {
-        const subtitle = mockSubtitlesOne.find(
+        const subtitle = subtitlesOne.find(
           sub => currentTime >= sub.start && currentTime <= sub.end
         );
         
@@ -214,14 +382,14 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(
           onCaptureSubtitle({
             text: subtitle.text,
             start: subtitle.start,
-            end: subtitle.end,
+            end: subtitle.end
           });
           return;
         }
       }
       
       if (showSubtitleTwo && currentSubtitleTwo) {
-        const subtitle = mockSubtitlesTwo.find(
+        const subtitle = subtitlesTwo.find(
           sub => currentTime >= sub.start && currentTime <= sub.end
         );
         
@@ -229,19 +397,16 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(
           onCaptureSubtitle({
             text: subtitle.text,
             start: subtitle.start,
-            end: subtitle.end,
+            end: subtitle.end
           });
           return;
         }
       }
       
-      // 如果没有找到对应字幕，使用模拟数据
-      const mockSubtitle = {
-        text: "这是一个示例字幕文本",
-        start: Math.max(0, currentTime - 2),
-        end: Math.min(duration, currentTime + 2),
-      };
-      onCaptureSubtitle(mockSubtitle);
+      // 如果没有找到字幕，提示用户
+      toast.error('没有找到当前字幕', {
+        description: '请确保字幕已加载并且当前时间点有字幕显示'
+      });
     };
 
     const seekTo = (time: number) => {
@@ -374,6 +539,15 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(
       );
     };
 
+    // 处理视频加载错误
+    const handleVideoError = (error: any) => {
+      console.error("Video playback error:", error);
+      setVideoError("视频加载失败，请检查文件格式或网络连接");
+      toast.error("视频加载失败", {
+        description: "请检查文件格式或网络连接"
+      });
+    };
+
     return (
       <Card className="w-full">
         <CardContent className={cn("p-4", isFullscreen && "p-0")}>
@@ -396,12 +570,33 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(
                   playbackRate={playbackRate}
                   onProgress={handleProgress}
                   onDuration={handleDuration}
+                  onError={handleVideoError}
                   config={{
                     file: {
-                      tracks: prepareTracks()
+                      tracks: prepareTracks(),
+                      forceVideo: true,
+                      forceAudio: true,
+                      attributes: { controlsList: 'nodownload' }
                     },
                   }}
                 />
+                
+                {/* 视频错误显示 */}
+                {videoError && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/70 text-white text-center p-4">
+                    <div>
+                      <p className="text-lg font-bold mb-2">播放错误</p>
+                      <p>{videoError}</p>
+                      <Button 
+                        variant="outline" 
+                        className="mt-4 text-white border-white hover:bg-white/20"
+                        onClick={() => setVideoError(null)}
+                      >
+                        关闭
+                      </Button>
+                    </div>
+                  </div>
+                )}
                 
                 {/* 自定义字幕显示 */}
                 {renderSubtitles()}
@@ -624,7 +819,7 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(
                   <Button
                     variant="outline"
                     onClick={() => toggleSubtitle('one')}
-                    disabled={!subtitleOneUrl && !mockSubtitlesOne.length}
+                    disabled={!subtitleOneUrl && !subtitlesOne.length}
                     className={cn(
                       "flex items-center gap-2 transition-colors",
                       showSubtitleOne && "bg-gray-200 text-gray-900"
@@ -636,7 +831,7 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(
                   <Button
                     variant="outline"
                     onClick={() => toggleSubtitle('two')}
-                    disabled={!subtitleTwoUrl && !mockSubtitlesTwo.length}
+                    disabled={!subtitleTwoUrl && !subtitlesTwo.length}
                     className={cn(
                       "flex items-center gap-2 transition-colors",
                       showSubtitleTwo && "bg-gray-200 text-gray-900"
