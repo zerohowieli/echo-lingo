@@ -9,7 +9,6 @@ export default function Home() {
   const [videoUrl, setVideoUrl] = useState<string | undefined>();
   const [subtitleOneUrl, setSubtitleOneUrl] = useState<string | undefined>();
   const [subtitleTwoUrl, setSubtitleTwoUrl] = useState<string | undefined>();
-  const [videoHeight, setVideoHeight] = useState<number>(0);
   const playerRef = useRef<any>(null);
   const subtitleListRef = useRef<SubtitleListRef>(null);
   const videoContainerRef = useRef<HTMLDivElement>(null);
@@ -28,34 +27,6 @@ export default function Home() {
     }
   };
 
-  // 监听视频容器高度变化
-  useEffect(() => {
-    if (!videoContainerRef.current) return;
-
-    const updateHeight = () => {
-      if (videoContainerRef.current) {
-        setVideoHeight(videoContainerRef.current.clientHeight);
-      }
-    };
-
-    // 初始化高度
-    updateHeight();
-
-    // 创建 ResizeObserver 监听元素大小变化
-    const resizeObserver = new ResizeObserver(updateHeight);
-    resizeObserver.observe(videoContainerRef.current);
-
-    // 监听窗口大小变化
-    window.addEventListener('resize', updateHeight);
-
-    return () => {
-      if (videoContainerRef.current) {
-        resizeObserver.unobserve(videoContainerRef.current);
-      }
-      window.removeEventListener('resize', updateHeight);
-    };
-  }, []);
-
   return (
     <main className="container mx-auto p-4">
       <h1 className="text-2xl font-bold mb-4 text-center">EchoLingo - 语言学习助手</h1>
@@ -73,7 +44,7 @@ export default function Home() {
         </div>
         
         {/* 右侧：字幕摘录 */}
-        <div className="md:col-span-1" style={{ height: videoHeight ? `${videoHeight}px` : '400px' }}>
+        <div className="md:col-span-1">
           <SubtitleList 
             ref={subtitleListRef}
             onPlaySubtitle={handlePlaySubtitle} 
