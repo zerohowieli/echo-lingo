@@ -826,7 +826,7 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(
                     )}
                   >
                     <Subtitles className={cn("h-4 w-4", showSubtitleOne ? "text-gray-900" : "text-slate-500")} />
-                    字幕1 (英文)
+                    字幕1
                   </Button>
                   <Button
                     variant="outline"
@@ -838,7 +838,7 @@ export const VideoPlayer = forwardRef<VideoPlayerRef, VideoPlayerProps>(
                     )}
                   >
                     <Subtitles className={cn("h-4 w-4", showSubtitleTwo ? "text-gray-900" : "text-slate-500")} />
-                    字幕2 (中文)
+                    字幕2
                   </Button>
                   <Button
                     variant="outline"
